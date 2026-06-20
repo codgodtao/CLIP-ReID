@@ -84,4 +84,11 @@ DATASETS:
 #   ROOT_DIR: ('')
 # OUTPUT_DIR: ''
 
+# Combined ReID dataset: 汇总 Market-1501, DukeMTMC-reID, CUHK03, VIPeR,
+# iLIDS-VID, RegDB(visible), PRCC, LTCC, LAST(RGB) 的所有split用于训练。
+# 验证测试集由用户自行准备。
+#   NAMES: ('combined_reid')
+#   ROOT_DIR: ('../data')
+# OUTPUT_DIR: ''
+
 # CUDA_VISIBLE_DEVICES=3 python train_clipreid.py --config_file configs/person/vit_clipreid.yml
