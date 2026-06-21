@@ -134,3 +134,27 @@ if __name__ == "__main__":
         num_query,
         args.local_rank,
     )
+
+    # ========================================================================
+    # 训练结束 — 导出 ONNX
+    # ========================================================================
+    export_checkpoint = os.path.join(cfg.OUTPUT_DIR, cfg.MODEL.NAME + "_final.pth")
+    torch.save(model.state_dict(), export_checkpoint)
+    logger.info(f"保存最终权重: {export_checkpoint}")
+
+    deploy_dir = os.path.join("deploy", cfg.MODEL.NAME.replace("-", "_"))
+    logger.info(f"开始 ONNX 导出 -> {deploy_dir} ...")
+    try:
+        import export_onnx as _eo
+
+        wrapper, meta = _eo.load_model_for_export(export_checkpoint, args.config_file)
+        _eo.export_onnx(wrapper, meta, deploy_dir, dynamic_batch=True, device="cuda")
+        logger.info("ONNX 导出完成")
+    except Exception as _e:
+        logger.warning(
+            f"ONNX 导出失败: {_e}。"
+            f"可稍后手动运行: python export_onnx.py "
+            f"--checkpoint {export_checkpoint} "
+            f"--config {args.config_file} "
+            f"--output_dir {deploy_dir}/"
+        )
