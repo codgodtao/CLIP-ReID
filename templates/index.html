@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CLIP-ReID Attention Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .upload-section {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .upload-area {
+            border: 3px dashed #ddd;
+            border-radius: 15px;
+            padding: 60px 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #fafafa;
+        }
+        
+        .upload-area:hover {
+            border-color: #667eea;
+            background: #f0f0ff;
+        }
+        
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: #e8eaff;
+            transform: scale(1.02);
+        }
+        
+        .upload-icon {
+            font-size: 4rem;
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+        
+        .upload-text {
+            font-size: 1.2rem;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .upload-hint {
+            font-size: 0.9rem;
+            color: #999;
+        }
+        
+        #fileInput {
+            display: none;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 30px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 20px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .preview-section {
+            display: none;
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        
+        .preview-section.active {
+            display: block;
+        }
+        
+        .preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .preview-title {
+            font-size: 1.3rem;
+            color: #333;
+        }
+        
+        .preview-image {
+            max-width: 100%;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+        
+        .visualization-section {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            display: none;
+        }
+        
+        .visualization-section.active {
+            display: block;
+        }
+        
+        .visualization-header {
+            margin-bottom: 20px;
+        }
+        
+        .visualization-title {
+            font-size: 1.3rem;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .visualization-subtitle {
+            font-size: 0.95rem;
+            color: #666;
+        }
+        
+        .layer-tabs {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        
+        .tab-btn {
+            background: #f0f0f0;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        .tab-btn:hover {
+            background: #e8e8e8;
+        }
+        
+        .tab-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .heatmap-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        
+        .heatmap-image {
+            width: 100%;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+        
+        .heatmap-legend {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .legend-label {
+            font-size: 0.85rem;
+            color: #666;
+        }
+        
+        .legend-bar {
+            width: 200px;
+            height: 20px;
+            border-radius: 10px;
+            background: linear-gradient(to right, #1e3a5f, #3498db, #e74c3c);
+        }
+        
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            color: #666;
+            font-size: 1rem;
+        }
+        
+        .error-message {
+            background: #fff5f5;
+            border: 1px solid #ffccc7;
+            border-radius: 10px;
+            padding: 15px;
+            color: #c53030;
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .error-message.active {
+            display: block;
+        }
+        
+        .info-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 20px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+        }
+        
+        .info-card h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+        
+        .info-card p {
+            color: #666;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+        
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.8rem;
+            }
+            
+            .upload-section {
+                padding: 25px 15px;
+            }
+            
+            .upload-area {
+                padding: 40px 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🧠 CLIP-ReID Attention Visualization</h1>
+            <p>上传图像，可视化 Transformer 注意力热力图</p>
+        </div>
+        
+        <!-- Upload Section -->
+        <div class="upload-section">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📷</div>
+                <div class="upload-text">点击或拖拽上传图像</div>
+                <div class="upload-hint">支持 JPG、PNG 格式，最大 16MB</div>
+            </div>
+            <input type="file" id="fileInput" accept="image/*">
+            <button class="btn" id="uploadBtn" disabled>上传图像</button>
+            
+            <div class="error-message" id="errorMessage"></div>
+        </div>
+        
+        <!-- Preview Section -->
+        <div class="preview-section" id="previewSection">
+            <div class="preview-header">
+                <span class="preview-title">📋 上传预览</span>
+                <button class="btn" id="reuploadBtn">重新上传</button>
+            </div>
+            <img id="previewImage" class="preview-image" alt="Preview">
+        </div>
+        
+        <!-- Loading State -->
+        <div class="visualization-section" id="loadingSection">
+            <div class="loading">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">正在生成注意力热力图...</div>
+            </div>
+        </div>
+        
+        <!-- Visualization Section -->
+        <div class="visualization-section" id="visualizationSection">
+            <div class="visualization-header">
+                <div class="visualization-title">🎯 Attention Heatmap</div>
+                <div class="visualization-subtitle">Transformer 注意力可视化结果</div>
+            </div>
+            
+            <div class="layer-tabs" id="layerTabs"></div>
+            
+            <div class="heatmap-container">
+                <img id="heatmapImage" class="heatmap-image" alt="Heatmap">
+            </div>
+            
+            <div class="heatmap-legend">
+                <span class="legend-label">Low Attention</span>
+                <div class="legend-bar"></div>
+                <span class="legend-label">High Attention</span>
+            </div>
+            
+            <div class="info-card">
+                <h3>💡 关于注意力可视化</h3>
+                <p>热力图显示了 Transformer 模型在处理图像时的注意力分布。红色区域表示模型更加关注的部分，蓝色区域表示较少关注的部分。CLS token 的注意力权重被用来生成这个可视化。</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const previewSection = document.getElementById('previewSection');
+        const previewImage = document.getElementById('previewImage');
+        const reuploadBtn = document.getElementById('reuploadBtn');
+        const loadingSection = document.getElementById('loadingSection');
+        const visualizationSection = document.getElementById('visualizationSection');
+        const layerTabs = document.getElementById('layerTabs');
+        const heatmapImage = document.getElementById('heatmapImage');
+        const errorMessage = document.getElementById('errorMessage');
+        
+        let selectedFile = null;
+        let currentResults = {};
+        
+        // File selection
+        uploadArea.addEventListener('click', () => fileInput.click());
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+        
+        function handleFile(file) {
+            // Validate file type
+            const validTypes = ['image/jpeg', 'image/png', 'image/jpg'];
+            if (!validTypes.includes(file.type)) {
+                showError('请上传 JPG 或 PNG 格式的图像');
+                return;
+            }
+            
+            // Validate file size (16MB)
+            if (file.size > 16 * 1024 * 1024) {
+                showError('文件大小超过限制（最大 16MB）');
+                return;
+            }
+            
+            selectedFile = file;
+            uploadBtn.disabled = false;
+            
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImage.src = e.target.result;
+                previewSection.classList.add('active');
+                errorMessage.classList.remove('active');
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        // Upload button click
+        uploadBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+            
+            // Show loading
+            previewSection.classList.remove('active');
+            visualizationSection.classList.remove('active');
+            loadingSection.classList.add('active');
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+                
+                const response = await fetch('/api/visualize', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    currentResults = result.paths;
+                    displayResults(result.layers);
+                } else {
+                    showError(result.error || '生成失败');
+                }
+            } catch (error) {
+                showError('网络错误，请重试');
+            } finally {
+                loadingSection.classList.remove('active');
+            }
+        });
+        
+        function displayResults(layers) {
+            // Clear existing tabs
+            layerTabs.innerHTML = '';
+            
+            // Create tabs
+            layers.forEach((layer, index) => {
+                const tab = document.createElement('button');
+                tab.className = 'tab-btn' + (index === 0 ? ' active' : '');
+                tab.textContent = layer;
+                tab.addEventListener('click', () => {
+                    // Switch tab
+                    document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    
+                    // Update image
+                    heatmapImage.src = currentResults[layer] + '?t=' + Date.now();
+                });
+                layerTabs.appendChild(tab);
+            });
+            
+            // Show first result
+            heatmapImage.src = currentResults[layers[0]] + '?t=' + Date.now();
+            visualizationSection.classList.add('active');
+        }
+        
+        // Reupload button
+        reuploadBtn.addEventListener('click', () => {
+            previewSection.classList.remove('active');
+            visualizationSection.classList.remove('active');
+            selectedFile = null;
+            uploadBtn.disabled = true;
+            fileInput.value = '';
+        });
+        
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.add('active');
+        }
+    </script>
+</body>
+</html>
