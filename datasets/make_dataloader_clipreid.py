@@ -4,11 +4,11 @@ from torch.utils.data import DataLoader
 
 from .bases import ImageDataset
 from timm.data.random_erasing import RandomErasing
-from .sampler import RandomIdentitySampler
+from .sampler import RandomIdentitySampler, BalancedDatasetSampler
 from .dukemtmcreid import DukeMTMCreID
 from .market1501 import Market1501
 from .msmt17 import MSMT17
-from .sampler_ddp import RandomIdentitySampler_DDP
+from .sampler_ddp import RandomIdentitySampler_DDP, BalancedDatasetSampler_DDP
 import torch.distributed as dist
 from .occ_duke import OCC_DukeMTMCreID
 from .vehicleid import VehicleID
@@ -73,7 +73,19 @@ def make_dataloader(cfg):
         if cfg.MODEL.DIST_TRAIN:
             print('DIST_TRAIN START')
             mini_batch_size = cfg.SOLVER.STAGE2.IMS_PER_BATCH // dist.get_world_size()
-            data_sampler = RandomIdentitySampler_DDP(dataset.train, cfg.SOLVER.STAGE2.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE)
+            if cfg.DATALOADER.BALANCED_SAMPLING and hasattr(dataset, 'dataset_pid_ranges'):
+                print('Using BalancedDatasetSampler_DDP with mode: {}'.format(cfg.DATALOADER.BALANCE_MODE))
+                dataset_weights = None
+                if cfg.DATALOADER.BALANCE_MODE == 'custom' and len(cfg.DATALOADER.DATASET_WEIGHTS) > 0:
+                    dataset_weights = dict(cfg.DATALOADER.DATASET_WEIGHTS)
+                data_sampler = BalancedDatasetSampler_DDP(
+                    dataset.train, cfg.SOLVER.STAGE2.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE,
+                    dataset_pid_ranges=dataset.dataset_pid_ranges,
+                    balance_mode=cfg.DATALOADER.BALANCE_MODE,
+                    dataset_weights=dataset_weights
+                )
+            else:
+                data_sampler = RandomIdentitySampler_DDP(dataset.train, cfg.SOLVER.STAGE2.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE)
             batch_sampler = torch.utils.data.sampler.BatchSampler(data_sampler, mini_batch_size, True)
             train_loader_stage2 = torch.utils.data.DataLoader(
                 train_set,
@@ -83,11 +95,27 @@ def make_dataloader(cfg):
                 pin_memory=True,
             )
         else:
-            train_loader_stage2 = DataLoader(
-                train_set, batch_size=cfg.SOLVER.STAGE2.IMS_PER_BATCH,
-                sampler=RandomIdentitySampler(dataset.train, cfg.SOLVER.STAGE2.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE),
-                num_workers=num_workers, collate_fn=train_collate_fn
-            )
+            if cfg.DATALOADER.BALANCED_SAMPLING and hasattr(dataset, 'dataset_pid_ranges'):
+                print('Using BalancedDatasetSampler with mode: {}'.format(cfg.DATALOADER.BALANCE_MODE))
+                dataset_weights = None
+                if cfg.DATALOADER.BALANCE_MODE == 'custom' and len(cfg.DATALOADER.DATASET_WEIGHTS) > 0:
+                    dataset_weights = dict(cfg.DATALOADER.DATASET_WEIGHTS)
+                train_loader_stage2 = DataLoader(
+                    train_set, batch_size=cfg.SOLVER.STAGE2.IMS_PER_BATCH,
+                    sampler=BalancedDatasetSampler(
+                        dataset.train, cfg.SOLVER.STAGE2.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE,
+                        dataset_pid_ranges=dataset.dataset_pid_ranges,
+                        balance_mode=cfg.DATALOADER.BALANCE_MODE,
+                        dataset_weights=dataset_weights
+                    ),
+                    num_workers=num_workers, collate_fn=train_collate_fn
+                )
+            else:
+                train_loader_stage2 = DataLoader(
+                    train_set, batch_size=cfg.SOLVER.STAGE2.IMS_PER_BATCH,
+                    sampler=RandomIdentitySampler(dataset.train, cfg.SOLVER.STAGE2.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE),
+                    num_workers=num_workers, collate_fn=train_collate_fn
+                )
     elif cfg.DATALOADER.SAMPLER == 'softmax':
         print('using softmax sampler')
         train_loader_stage2 = DataLoader(
