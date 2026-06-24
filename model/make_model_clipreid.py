@@ -83,7 +83,10 @@ class build_transformer(nn.Module):
         self.w_resolution = int((cfg.INPUT.SIZE_TRAIN[1]-16)//cfg.MODEL.STRIDE_SIZE[1] + 1)
         self.vision_stride_size = cfg.MODEL.STRIDE_SIZE[0]
         clip_model = load_clip_to_cpu(self.model_name, self.h_resolution, self.w_resolution, self.vision_stride_size)
-        clip_model.to("cuda")
+        # 修复: 原代码硬编码 .to("cuda"), 在无 CUDA 环境下会崩溃。
+        # 改为优先使用 CUDA, 不可用时回退到 CPU, 由外层 model.to(local_rank) 统一搬运。
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        clip_model.to(device)
 
         self.image_encoder = clip_model.visual
 
@@ -154,9 +157,20 @@ class build_transformer(nn.Module):
 
 
     def load_param(self, trained_path):
-        param_dict = torch.load(trained_path)
-        for i in param_dict:
-            self.state_dict()[i.replace('module.', '')].copy_(param_dict[i])
+        # 修复: 原代码逐 key copy_, 遇到不匹配的 key 会 KeyError 崩溃。
+        # 改为 load_state_dict(strict=False), 容忍缺失/多余 key 并打印警告。
+        param_dict = torch.load(trained_path, map_location='cpu')
+        if isinstance(param_dict, dict) and 'state_dict' in param_dict:
+            param_dict = param_dict['state_dict']
+        new_state_dict = {}
+        for k, v in param_dict.items():
+            new_k = k.replace('module.', '')
+            new_state_dict[new_k] = v
+        missing, unexpected = self.load_state_dict(new_state_dict, strict=False)
+        if missing:
+            print('[load_param] missing keys ({}): {}'.format(len(missing), missing[:10]))
+        if unexpected:
+            print('[load_param] unexpected keys ({}): {}'.format(len(unexpected), unexpected[:10]))
         print('Loading pretrained model from {}'.format(trained_path))
 
     def load_param_finetune(self, model_path):
@@ -200,10 +214,12 @@ class PromptLearner(nn.Module):
         # use given words to initialize context vectors
         ctx_init = ctx_init.replace("_", " ")
         n_ctx = 4
-        
-        tokenized_prompts = clip.tokenize(ctx_init).cuda() 
+
+        # 修复: 原代码硬编码 .cuda(), 在无 CUDA 环境下会崩溃。
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        tokenized_prompts = clip.tokenize(ctx_init).to(device)
         with torch.no_grad():
-            embedding = token_embedding(tokenized_prompts).type(dtype) 
+            embedding = token_embedding(tokenized_prompts).type(dtype)
         self.tokenized_prompts = tokenized_prompts  # torch.Tensor
 
         n_cls_ctx = 4

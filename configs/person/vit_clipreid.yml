@@ -5,7 +5,10 @@ MODEL:
   IF_WITH_CENTER: 'no'
   NAME: 'ViT-B-16'
   STRIDE_SIZE: [16, 16]
-  ID_LOSS_WEIGHT : 0.25
+  # ID 损失权重由 0.25 提升至 1.0。
+  # 原值过低导致分类信号偏弱, 学到的特征判别性不足,
+  # 表现为不同人的余弦相似度差异很小、难以区分。
+  ID_LOSS_WEIGHT : 1.0
   TRIPLET_LOSS_WEIGHT : 1.0
   I2T_LOSS_WEIGHT : 1.0
   # SIE_CAMERA: True
@@ -22,7 +25,9 @@ INPUT:
 
 DATALOADER:
   SAMPLER: 'softmax_triplet'
-  NUM_INSTANCE: 4
+  # 每个 identity 在 batch 内的实例数由 4 提升至 8,
+  # 为 triplet 挖掘提供更多正样本对, 提升判别性。
+  NUM_INSTANCE: 8
   NUM_WORKERS: 8
 
 SOLVER:
@@ -39,7 +44,7 @@ SOLVER:
     CHECKPOINT_PERIOD: 120
     LOG_PERIOD: 50
     WARMUP_EPOCHS: 5
-  
+
   STAGE2:
     IMS_PER_BATCH: 64
     OPTIMIZER_NAME: "Adam"
@@ -55,16 +60,19 @@ SOLVER:
     LOG_PERIOD: 50
     EVAL_PERIOD: 60
     BIAS_LR_FACTOR: 2
-    
+
     STEPS: [30, 50]
     GAMMA: 0.1
-  
+
 TEST:
   EVAL: True
   IMS_PER_BATCH: 64
   RE_RANKING: False
   WEIGHT: ''
-  NECK_FEAT: 'before'
+  # 使用 BNNeck 之后的特征做检索。
+  # 'before' 使用未经 BNNeck 对齐的原始特征, 各维度尺度不一致,
+  # 余弦相似度区分度低; 'after' 经过 BNNeck 后特征更紧凑、判别性更强。
+  NECK_FEAT: 'after'
   FEAT_NORM: 'yes'
 
 DATASETS:

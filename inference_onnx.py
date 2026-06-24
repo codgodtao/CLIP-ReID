@@ -221,9 +221,12 @@ def build_gallery(
     Returns:
         (features, paths, pids, cids)
     """
-    paths = sorted(Path(image_dir).rglob("*.jpg" if recursive else "*.jpg"))
-    paths = [p for p in paths if not p.name.startswith(".")] + \
-            sorted(Path(image_dir).rglob("*.png" if recursive else "*.png"))
+    # 修复: 原代码路径扫描逻辑冗余且 buggy:
+    #   1. `"*.jpg" if recursive else "*.jpg"` 两个分支相同, recursive 参数无效
+    #   2. 第二个 filter 只过滤了 png 列表, 未过滤合并后的列表
+    # 改为: 根据 recursive 决定用 rglob 还是 glob, 统一收集 jpg+png 后再过滤。
+    path_iter = Path(image_dir).rglob if recursive else Path(image_dir).glob
+    paths = sorted(list(path_iter("*.jpg")) + list(path_iter("*.png")))
     paths = [p for p in paths if not p.name.startswith(".")]
 
     logger.info(f"[gallery] 扫描到 {len(paths)} 张图像 ...")
@@ -282,6 +285,7 @@ def evaluate(
 
     aps = []
     cmc = np.zeros(top_k, dtype=np.float32)
+    num_valid_q = 0  # 修复: 只对底库中存在同 pid 的 query 计算 CMC, 否则拉低指标
 
     for qp in query_paths:
         q_img = Image.open(qp).convert("RGB")
@@ -295,25 +299,25 @@ def evaluate(
         dists = 1.0 - q_feat @ gallery_feats.T
         indices = np.argsort(dists)
 
-        # CMC@1
-        for j, idx in enumerate(indices[:top_k]):
-            if gallery_pids[idx] == q_pid and gallery_cids[idx] != q_cid:
-                cmc[j:] += 1
-                break
-
-        # AP
+        # 跳过底库中无该 pid 的 query (无有效正样本)
         relevant = (gallery_pids == q_pid) & (gallery_cids != q_cid)
         if relevant.sum() == 0:
             continue
+        num_valid_q += 1
+
+        # CMC@k: 找到第一个正确匹配的位置 j, 则 rank>=j+1 都算命中
         ranked_relevant = relevant[indices]
-        tp = ranked_relevant.sum()
-        fp = (~ranked_relevant).sum()
+        first_hit = np.argmax(ranked_relevant)  # 第一个 True 的位置
+        if ranked_relevant[first_hit]:
+            cmc[first_hit:] += 1
+
+        # AP: 标准公式 = sum(prec[k] * rel[k]) / num_relevant
+        # 修复: 原代码用 recall*prec 求和且未除以 num_relevant, 计算错误。
         prec = np.cumsum(ranked_relevant) / (np.arange(len(ranked_relevant)) + 1)
-        recall = np.cumsum(ranked_relevant) / tp
-        ap = (recall[ranked_relevant] * prec[ranked_relevant]).sum()
+        ap = prec[ranked_relevant].sum() / relevant.sum()
         aps.append(ap)
 
-    cmc /= max(len(query_paths), 1)
+    cmc /= max(num_valid_q, 1)
     mAP = np.mean(aps) if aps else 0.0
 
     logger.info(f"[eval] mAP={mAP:.1%}")
