@@ -34,7 +34,7 @@ class build_transformer(nn.Module):
         self.cos_layer = cfg.MODEL.COS_LAYER
         self.neck = cfg.MODEL.NECK
         self.neck_feat = cfg.TEST.NECK_FEAT
-        if self.model_name == 'ViT-B-16':
+        if 'ViT-B-16' in self.model_name:
             self.in_planes = 768
             self.in_planes_proj = 512
         elif self.model_name == 'RN50':

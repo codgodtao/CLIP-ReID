@@ -50,6 +50,21 @@ _OPENCLIP_MODELS = {
         "transformer_width": 512,
         "transformer_heads": 8,
         "transformer_layers": 12,
+        "imagenet_acc": "70.2%",
+    },
+    "ViT-B-16-datacomp-xl": {
+        "hf_repo": "laion/CLIP-ViT-B-16-DataComp.XL-s13B-b90K",
+        "filename": "open_clip_pytorch_model.bin",
+        "embed_dim": 512,
+        "vision_width": 768,
+        "vision_layers": 12,
+        "vision_patch_size": 16,
+        "context_length": 77,
+        "vocab_size": 49408,
+        "transformer_width": 512,
+        "transformer_heads": 8,
+        "transformer_layers": 12,
+        "imagenet_acc": "73.5%",
     },
 }
 
