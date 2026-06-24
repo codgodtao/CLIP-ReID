@@ -135,6 +135,43 @@ def make_model(cfg, num_class, camera_num, view_num):
 
 from .clip import clip
 def load_clip_to_cpu(backbone_name, h_resolution, w_resolution, vision_stride_size):
+    # Check if it's an OpenCLIP LAION2B model
+    if backbone_name in clip._OPENCLIP_MODELS:
+        cfg = clip._OPENCLIP_MODELS[backbone_name]
+        model_path = _download_openclip_from_hf(
+            cfg["hf_repo"],
+            cfg["filename"],
+            os.path.expanduser("~/.cache/clip")
+        )
+
+        # Load OpenCLIP checkpoint
+        state_dict = torch.load(model_path, map_location="cpu")
+
+        # Handle nested state_dict
+        if isinstance(state_dict, dict) and "state_dict" in state_dict:
+            state_dict = state_dict["state_dict"]
+
+        # Convert OpenCLIP keys to OpenAI CLIP format for compatibility
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            new_key = key
+
+            # Visual encoder: visual.trunk.* -> visual.*
+            if key.startswith("visual.trunk."):
+                new_key = key.replace("visual.trunk.", "visual.")
+            # Visual projection: visual.head.* -> visual.proj.*
+            elif key.startswith("visual.head."):
+                new_key = key.replace("visual.head.", "visual.proj.")
+
+            new_state_dict[new_key] = value
+
+        state_dict = new_state_dict
+
+        # Build model using clip.build_model
+        model = clip.build_model(state_dict, h_resolution, w_resolution, vision_stride_size)
+        return model
+
+    # Original OpenAI CLIP loading
     url = clip._MODELS[backbone_name]
     model_path = clip._download(url)
 
@@ -149,3 +186,39 @@ def load_clip_to_cpu(backbone_name, h_resolution, w_resolution, vision_stride_si
     model = clip.build_model(state_dict or model.state_dict(), h_resolution, w_resolution, vision_stride_size)
 
     return model
+
+
+def _download_openclip_from_hf(hf_repo: str, filename: str, root: str) -> str:
+    """Download OpenCLIP model from HuggingFace."""
+    import hashlib
+    import shutil
+
+    os.makedirs(root, exist_ok=True)
+    cache_name = f"{hf_repo.replace('/', '_')}_{filename}"
+    download_target = os.path.join(root, cache_name)
+
+    if os.path.exists(download_target):
+        print(f"Using cached OpenCLIP model: {download_target}")
+        return download_target
+
+    try:
+        from huggingface_hub import hf_hub_download
+        print(f"Downloading OpenCLIP model from HuggingFace: {hf_repo}")
+        download_target = hf_hub_download(
+            repo_id=hf_repo,
+            filename=filename,
+            cache_dir=root
+        )
+        return download_target
+    except ImportError:
+        # Fallback to manual download using urllib
+        import urllib.request
+        url = f"https://huggingface.co/{hf_repo}/resolve/main/{filename}"
+        print(f"Downloading from {url}...")
+
+        with urllib.request.urlopen(url) as source, open(download_target + '.tmp', 'wb') as output:
+            shutil.copyfileobj(source, output)
+
+        os.rename(download_target + '.tmp', download_target)
+        print(f"Downloaded to: {download_target}")
+        return download_target

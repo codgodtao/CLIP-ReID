@@ -35,6 +35,24 @@ _MODELS = {
     "ViT-B-16": "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt",
 }
 
+# OpenCLIP LAION2B models - better pretrained weights with higher ImageNet accuracy
+# ViT-B-16 OpenAI: ~68.3% -> LAION2B: ~70.2% (+1.9% improvement)
+_OPENCLIP_MODELS = {
+    "ViT-B-16-laion2b": {
+        "hf_repo": "laion/CLIP-ViT-B-16-laion2B-s34B-b88K",
+        "filename": "open_clip_pytorch_model.bin",
+        "embed_dim": 512,
+        "vision_width": 768,
+        "vision_layers": 12,
+        "vision_patch_size": 16,
+        "context_length": 77,
+        "vocab_size": 49408,
+        "transformer_width": 512,
+        "transformer_heads": 8,
+        "transformer_layers": 12,
+    },
+}
+
 
 def _download(url: str, root: str = os.path.expanduser("~/.cache/clip")):
     os.makedirs(root, exist_ok=True)
@@ -79,8 +97,8 @@ def _transform(n_px):
 
 
 def available_models() -> List[str]:
-    """Returns the names of available CLIP models"""
-    return list(_MODELS.keys())
+    """Returns the names of available CLIP models (both OpenAI and OpenCLIP)"""
+    return list(_MODELS.keys()) + list(_OPENCLIP_MODELS.keys())
 
 
 def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", jit=False):
