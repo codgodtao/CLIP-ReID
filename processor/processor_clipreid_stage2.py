@@ -35,7 +35,7 @@ def do_train_stage2(cfg,
         model.to(local_rank)
         if torch.cuda.device_count() > 1:
             print('Using {} GPUs for training'.format(torch.cuda.device_count()))
-            model = nn.DataParallel(model)  
+            model = nn.DataParallel(model)
             num_classes = model.module.num_classes
         else:
             num_classes = model.num_classes
@@ -46,7 +46,7 @@ def do_train_stage2(cfg,
     evaluator = R1_mAP_eval(num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)
     scaler = amp.GradScaler()
     xent = SupConLoss(device)
-    
+
     # train
     import time
     from datetime import timedelta
@@ -69,14 +69,15 @@ def do_train_stage2(cfg,
                 text_feature = model(label = l_list, get_text = True)
             text_features.append(text_feature.cpu())
         text_features = torch.cat(text_features, 0).cuda()
+        # L2 归一化文本特征, 与归一化后的图像特征做点积得到余弦相似度,
+        # 使 i2t logits 尺度稳定在 [-1, 1] / T 范围, 避免数值过大导致 softmax 饱和。
+        text_features = F.normalize(text_features, dim=-1)
 
     for epoch in range(1, epochs + 1):
         start_time = time.time()
         loss_meter.reset()
         acc_meter.reset()
         evaluator.reset()
-
-        scheduler.step()
 
         model.train()
         for n_iter, (img, vid, target_cam, target_view) in enumerate(train_loader_stage2):
@@ -86,15 +87,18 @@ def do_train_stage2(cfg,
             target = vid.to(device)
             if cfg.MODEL.SIE_CAMERA:
                 target_cam = target_cam.to(device)
-            else: 
+            else:
                 target_cam = None
             if cfg.MODEL.SIE_VIEW:
                 target_view = target_view.to(device)
-            else: 
+            else:
                 target_view = None
             with amp.autocast(enabled=True):
                 score, feat, image_features = model(x = img, label = target, cam_label=target_cam, view_label=target_view)
-                logits = image_features @ text_features.t()
+                # 对图像特征做 L2 归一化后再与归一化的文本特征点积,
+                # 得到余弦相似度作为 i2t logits, 提升跨模态对齐质量。
+                image_features_norm = F.normalize(image_features, dim=-1)
+                logits = image_features_norm @ text_features.t()
                 loss = loss_fn(score, feat, target, target_cam, logits)
 
             scaler.scale(loss).backward()
@@ -119,6 +123,11 @@ def do_train_stage2(cfg,
                             .format(epoch, (n_iter + 1), len(train_loader_stage2),
                                     loss_meter.avg, acc_meter.avg, scheduler.get_lr()[0]))
 
+        # 修复: WarmupMultiStepLR 是按 iteration 计数的调度器,
+        # 应在每个 epoch 结束 (训练完一个 epoch 的 iteration) 后步进,
+        # 而不是在 epoch 开始前步进 (会导致第一个 epoch 就跳过 warmup 初始 lr)。
+        scheduler.step()
+
         end_time = time.time()
         time_per_batch = (end_time - start_time) / (n_iter + 1)
         if cfg.MODEL.DIST_TRAIN:
@@ -137,6 +146,11 @@ def do_train_stage2(cfg,
                            os.path.join(cfg.OUTPUT_DIR, cfg.MODEL.NAME + '_{}.pth'.format(epoch)))
 
         if epoch % eval_period == 0:
+            # 修复: 当使用 combined_reid 等无验证集的数据集时, val_loader 为空,
+            # 直接调用 evaluator.compute() 会因 num_valid_q=0 触发 assert 报错。
+            if num_query == 0 or len(val_loader.dataset) == 0:
+                logger.info("Validation skipped: val_loader is empty (num_query={}).".format(num_query))
+                continue
             if cfg.MODEL.DIST_TRAIN:
                 if dist.get_rank() == 0:
                     model.eval()
@@ -145,11 +159,11 @@ def do_train_stage2(cfg,
                             img = img.to(device)
                             if cfg.MODEL.SIE_CAMERA:
                                 camids = camids.to(device)
-                            else: 
+                            else:
                                 camids = None
                             if cfg.MODEL.SIE_VIEW:
                                 target_view = target_view.to(device)
-                            else: 
+                            else:
                                 target_view = None
                             feat = model(img, cam_label=camids, view_label=target_view)
                             evaluator.update((feat, vid, camid))
@@ -166,11 +180,11 @@ def do_train_stage2(cfg,
                         img = img.to(device)
                         if cfg.MODEL.SIE_CAMERA:
                             camids = camids.to(device)
-                        else: 
+                        else:
                             camids = None
                         if cfg.MODEL.SIE_VIEW:
                             target_view = target_view.to(device)
-                        else: 
+                        else:
                             target_view = None
                         feat = model(img, cam_label=camids, view_label=target_view)
                         evaluator.update((feat, vid, camid))
@@ -194,6 +208,11 @@ def do_inference(cfg,
     logger = logging.getLogger("transreid.test")
     logger.info("Enter inferencing")
 
+    # 修复: 无验证集时直接返回, 避免崩溃。
+    if num_query == 0 or len(val_loader.dataset) == 0:
+        logger.warning("Skip inference: val_loader is empty (num_query={}).".format(num_query))
+        return 0.0, 0.0
+
     evaluator = R1_mAP_eval(num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)
 
     evaluator.reset()
@@ -212,11 +231,11 @@ def do_inference(cfg,
             img = img.to(device)
             if cfg.MODEL.SIE_CAMERA:
                 camids = camids.to(device)
-            else: 
+            else:
                 camids = None
             if cfg.MODEL.SIE_VIEW:
                 target_view = target_view.to(device)
-            else: 
+            else:
                 target_view = None
             feat = model(img, cam_label=camids, view_label=target_view)
             evaluator.update((feat, pid, camid))

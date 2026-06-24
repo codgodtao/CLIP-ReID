@@ -12,7 +12,16 @@ from .center_loss import CenterLoss
 
 def make_loss(cfg, num_classes):    # modified by gu
     sampler = cfg.DATALOADER.SAMPLER
-    feat_dim = 2048
+    # feat_dim 必须与模型输出维度一致, 否则 center loss 会因形状不匹配报错。
+    # ViT-B-16: 768 (img_feature) + 512 (img_feature_proj) = 1280
+    # RN50:     2048 + 1024 = 3072
+    # 这里取模型测试时拼接后的总维度 (cat([feat, feat_proj])).
+    if cfg.MODEL.NAME == 'ViT-B-16':
+        feat_dim = 768 + 512
+    elif cfg.MODEL.NAME == 'RN50':
+        feat_dim = 2048 + 1024
+    else:
+        feat_dim = 2048
     center_criterion = CenterLoss(num_classes=num_classes, feat_dim=feat_dim, use_gpu=True)  # center loss
     if 'triplet' in cfg.MODEL.METRIC_LOSS_TYPE:
         if cfg.MODEL.NO_MARGIN:

@@ -104,5 +104,4 @@ class DukeMTMCreID(BaseImageDataset):
             if relabel: pid = pid2label[pid]
             dataset.append((img_path, self.pid_begin + pid, camid, 0))
             cam_container.add(camid)
-        print(cam_container, 'cam_container')
         return dataset

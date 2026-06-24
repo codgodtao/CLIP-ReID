@@ -49,7 +49,8 @@ class LAST(BaseImageDataset):
         self.pid_begin = pid_begin
         self._check_before_run()
 
-        # 加载训练集和测试集的 RGB 图像，合并所有 split 用于综合训练
+        # 加载训练集和测试集的 RGB 图像
+        # train 重标号, test 不重标号 (用于评估时与 train 区分)
         train = self._process_dir(self.train_dir, relabel=True)
         test = self._process_dir(self.test_dir, relabel=False)
 
@@ -58,8 +59,14 @@ class LAST(BaseImageDataset):
             self.print_dataset_statistics(train, test, [])
 
         self.train = train
-        self.query = test
-        self.gallery = []
+        # 修复: 原代码 self.query = test, self.gallery = [] 会导致评估崩溃
+        # (eval_func 要求 gallery 非空, 且会移除与 query 同 pid 同 camid 的样本,
+        #  若 gallery 为空则 num_valid_q=0 触发 assert)。
+        # 改为: query 和 gallery 都使用 test 集, 通过 camid 区分 (不同 camid 才算有效匹配)。
+        # 由于 LAST 文件名未编码 camid, 这里给 query 和 gallery 分配不同 camid
+        # (query=0, gallery=1), 使 eval_func 能正常工作。
+        self.query = [(p, pid, 0, t) for (p, pid, _, t) in test]
+        self.gallery = [(p, pid, 1, t) for (p, pid, _, t) in test]
 
         self.num_train_pids, self.num_train_imgs, self.num_train_cams, self.num_train_vids = \
             self.get_imagedata_info(self.train)
