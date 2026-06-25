@@ -60,15 +60,17 @@ class CombinedReID(BaseImageDataset):
         all_train = []
         current_pid_offset = pid_begin
         current_cam_offset = 0
-        self.dataset_stats = []  # 记录每个子数据集的统计信息
+        self.dataset_stats = []
+        self.train_dataset_ids = []
+        self.dataset_pid_ranges = {}
+        self.dataset_names = []
+        self.dataset_pid_counts = {}
 
-        for name, cls, desc in self.sub_datasets:
+        for dataset_idx, (name, cls, desc) in enumerate(self.sub_datasets):
             try:
                 sub_dataset = cls(root=root, verbose=False, pid_begin=0)
-                # 合并该子数据集的所有 split（train + query + gallery）
                 all_images = sub_dataset.train + sub_dataset.query + sub_dataset.gallery
 
-                # 全局重新编号 pid 和 camid，避免不同数据集间冲突
                 pid_map = {}
                 cam_map = {}
                 next_pid = current_pid_offset
@@ -84,10 +86,14 @@ class CombinedReID(BaseImageDataset):
                     remapped.append((img_path, pid_map[pid], cam_map[camid], trackid))
 
                 all_train.extend(remapped)
+                self.train_dataset_ids.extend([dataset_idx] * len(remapped))
                 num_pids = len(pid_map)
                 num_imgs = len(remapped)
                 num_cams = len(cam_map)
                 self.dataset_stats.append((name, num_pids, num_imgs, num_cams, desc))
+                self.dataset_pid_ranges[name] = (current_pid_offset, next_pid)
+                self.dataset_pid_counts[name] = num_pids
+                self.dataset_names.append(name)
 
                 if verbose:
                     print("=> {:<15s} loaded: {:6d} images, {:5d} pids, {:3d} cams"

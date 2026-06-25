@@ -101,6 +101,12 @@ _C.DATALOADER.NUM_WORKERS = 8
 _C.DATALOADER.SAMPLER = 'softmax'
 # Number of instance for one batch
 _C.DATALOADER.NUM_INSTANCE = 16
+# Balanced dataset sampling for combined_reid
+_C.DATALOADER.BALANCED_SAMPLING = False
+# Balance mode: 'uniform', 'proportional', 'square_root', 'custom'
+_C.DATALOADER.BALANCE_MODE = 'uniform'
+# Custom dataset weights (dict), used when BALANCE_MODE = 'custom'
+_C.DATALOADER.DATASET_WEIGHTS = ()
 
 # ---------------------------------------------------------------------------- #
 # Solver

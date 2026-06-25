@@ -9,6 +9,234 @@ _LOCAL_PROCESS_GROUP = None
 import torch
 import pickle
 
+
+class BalancedDatasetSampler_DDP(Sampler):
+    """
+    Balanced Dataset Sampler (DDP version): 分布式版本的数据集平衡采样器
+
+    支持的平衡模式 (balance_mode):
+    - 'uniform': 每个数据集被选中的概率相同（均匀分布）
+    - 'proportional': 按数据集身份数量比例采样
+    - 'square_root': 按数据集身份数量的平方根比例采样
+
+    Args:
+    - data_source (list): list of (img_path, pid, camid, trackid)
+    - batch_size (int): 全局 batch size
+    - num_instances (int): number of instances per identity in a batch
+    - dataset_pid_ranges (dict): {dataset_name: (pid_start, pid_end)}
+    - balance_mode (str): 平衡模式
+    - dataset_weights (dict or None): 自定义权重
+    """
+
+    def __init__(self, data_source, batch_size, num_instances,
+                 dataset_pid_ranges=None, balance_mode='uniform',
+                 dataset_weights=None):
+        self.data_source = data_source
+        self.batch_size = batch_size
+        self.world_size = dist.get_world_size()
+        self.num_instances = num_instances
+        self.mini_batch_size = self.batch_size // self.world_size
+        self.num_pids_per_batch = self.mini_batch_size // self.num_instances
+        self.balance_mode = balance_mode
+
+        self.index_dic = defaultdict(list)
+        for index, (_, pid, _, _) in enumerate(self.data_source):
+            self.index_dic[pid].append(index)
+        self.pids = list(self.index_dic.keys())
+
+        self.length = 0
+        for pid in self.pids:
+            idxs = self.index_dic[pid]
+            num = len(idxs)
+            if num < self.num_instances:
+                num = self.num_instances
+            self.length += num - num % self.num_instances
+
+        self.dataset_pids = defaultdict(list)
+        if dataset_pid_ranges is not None:
+            for ds_name, (pid_start, pid_end) in dataset_pid_ranges.items():
+                for pid in self.pids:
+                    if pid_start <= pid < pid_end:
+                        self.dataset_pids[ds_name].append(pid)
+            self.dataset_names = list(self.dataset_pids.keys())
+        else:
+            self.dataset_pids['default'] = self.pids
+            self.dataset_names = ['default']
+
+        self._compute_dataset_weights(dataset_weights)
+
+        self.rank = dist.get_rank()
+        self.length //= self.world_size
+
+    def _compute_dataset_weights(self, dataset_weights):
+        if self.balance_mode == 'custom' and dataset_weights is not None:
+            self.dataset_weights = []
+            for name in self.dataset_names:
+                self.dataset_weights.append(dataset_weights.get(name, 0.0))
+            total = sum(self.dataset_weights)
+            if total > 0:
+                self.dataset_weights = [w / total for w in self.dataset_weights]
+            else:
+                self.dataset_weights = [1.0 / len(self.dataset_names)] * len(self.dataset_names)
+        elif self.balance_mode == 'proportional':
+            counts = [len(self.dataset_pids[name]) for name in self.dataset_names]
+            total = sum(counts)
+            self.dataset_weights = [c / total for c in counts]
+        elif self.balance_mode == 'square_root':
+            counts = [len(self.dataset_pids[name]) for name in self.dataset_names]
+            sqrt_counts = [np.sqrt(c) for c in counts]
+            total = sum(sqrt_counts)
+            self.dataset_weights = [c / total for c in sqrt_counts]
+        else:
+            self.dataset_weights = [1.0 / len(self.dataset_names)] * len(self.dataset_names)
+
+    def _sample_pids_from_datasets(self, num_pids, available_pids_per_ds):
+        selected_pids = []
+        available_datasets = []
+        available_weights = []
+        for i, name in enumerate(self.dataset_names):
+            if len(available_pids_per_ds[name]) > 0:
+                available_datasets.append(name)
+                available_weights.append(self.dataset_weights[i])
+        total_w = sum(available_weights)
+        if total_w == 0:
+            return selected_pids
+        available_weights = [w / total_w for w in available_weights]
+
+        while len(selected_pids) < num_pids and len(available_datasets) > 0:
+            counts_per_ds = {}
+            for i, name in enumerate(available_datasets):
+                expected = available_weights[i] * num_pids
+                counts_per_ds[name] = max(1, int(round(expected)))
+
+            total_expected = sum(counts_per_ds.values())
+            if total_expected > num_pids:
+                ratio = num_pids / total_expected
+                for name in counts_per_ds:
+                    counts_per_ds[name] = max(1, int(counts_per_ds[name] * ratio))
+
+            total_expected = sum(counts_per_ds.values())
+            diff = num_pids - total_expected
+            if diff != 0 and len(available_datasets) > 0:
+                sorted_ds = sorted(available_datasets,
+                                   key=lambda n: len(available_pids_per_ds[n]),
+                                   reverse=True)
+                for i in range(abs(diff)):
+                    ds = sorted_ds[i % len(sorted_ds)]
+                    if diff > 0:
+                        counts_per_ds[ds] = counts_per_ds.get(ds, 0) + 1
+                    else:
+                        if counts_per_ds.get(ds, 0) > 1:
+                            counts_per_ds[ds] -= 1
+
+            for name in available_datasets:
+                if len(selected_pids) >= num_pids:
+                    break
+                n_select = min(counts_per_ds.get(name, 0), len(available_pids_per_ds[name]))
+                n_select = min(n_select, num_pids - len(selected_pids))
+                if n_select > 0:
+                    chosen = np.random.choice(available_pids_per_ds[name], n_select, replace=False).tolist()
+                    selected_pids.extend(chosen)
+                    for pid in chosen:
+                        available_pids_per_ds[name].remove(pid)
+
+            new_available_datasets = []
+            new_available_weights = []
+            for i, name in enumerate(available_datasets):
+                if len(available_pids_per_ds[name]) > 0:
+                    new_available_datasets.append(name)
+                    new_available_weights.append(available_weights[i])
+            if len(new_available_datasets) == len(available_datasets):
+                break
+            available_datasets = new_available_datasets
+            total_w = sum(new_available_weights)
+            if total_w > 0:
+                available_weights = [w / total_w for w in new_available_weights]
+            else:
+                available_weights = [1.0 / len(new_available_datasets)] * len(new_available_datasets)
+
+        if len(selected_pids) < num_pids:
+            all_remaining = []
+            for name in self.dataset_names:
+                all_remaining.extend(available_pids_per_ds[name])
+            if len(all_remaining) >= num_pids - len(selected_pids):
+                extra = np.random.choice(all_remaining, num_pids - len(selected_pids), replace=False).tolist()
+                selected_pids.extend(extra)
+                for pid in extra:
+                    for name in self.dataset_names:
+                        if pid in available_pids_per_ds[name]:
+                            available_pids_per_ds[name].remove(pid)
+                            break
+
+        return selected_pids
+
+    def __iter__(self):
+        seed = shared_random_seed()
+        np.random.seed(seed)
+        random.seed(seed)
+        self._seed = int(seed)
+        final_idxs = self.sample_list()
+        length = int(math.ceil(len(final_idxs) * 1.0 / self.world_size))
+        final_idxs = self.__fetch_current_node_idxs(final_idxs, length)
+        self.length = len(final_idxs)
+        return iter(final_idxs)
+
+    def __fetch_current_node_idxs(self, final_idxs, length):
+        total_num = len(final_idxs)
+        block_num = (length // self.mini_batch_size)
+        index_target = []
+        for i in range(0, block_num * self.world_size, self.world_size):
+            index = range(self.mini_batch_size * self.rank + self.mini_batch_size * i,
+                          min(self.mini_batch_size * self.rank + self.mini_batch_size * (i+1), total_num))
+            index_target.extend(index)
+        index_target_npy = np.array(index_target)
+        final_idxs = list(np.array(final_idxs)[index_target_npy])
+        return final_idxs
+
+    def sample_list(self):
+        avai_pids_per_ds = {}
+        batch_idxs_dict = {}
+        for name in self.dataset_names:
+            avai_pids_per_ds[name] = copy.deepcopy(self.dataset_pids[name])
+
+        batch_indices = []
+        total_pids = sum(len(v) for v in avai_pids_per_ds.values())
+
+        while total_pids >= self.num_pids_per_batch:
+            selected_pids = self._sample_pids_from_datasets(
+                self.num_pids_per_batch, avai_pids_per_ds)
+
+            if len(selected_pids) < self.num_pids_per_batch:
+                break
+
+            np.random.shuffle(selected_pids)
+            for pid in selected_pids:
+                if pid not in batch_idxs_dict:
+                    idxs = copy.deepcopy(self.index_dic[pid])
+                    if len(idxs) < self.num_instances:
+                        idxs = np.random.choice(idxs, size=self.num_instances, replace=True).tolist()
+                    np.random.shuffle(idxs)
+                    batch_idxs_dict[pid] = idxs
+
+                avai_idxs = batch_idxs_dict[pid]
+                for _ in range(self.num_instances):
+                    batch_indices.append(avai_idxs.pop(0))
+
+                if len(avai_idxs) < self.num_instances:
+                    del batch_idxs_dict[pid]
+                    for name in self.dataset_names:
+                        if pid in avai_pids_per_ds[name]:
+                            avai_pids_per_ds[name].remove(pid)
+                            break
+
+            total_pids = sum(len(v) for v in avai_pids_per_ds.values())
+
+        return batch_indices
+
+    def __len__(self):
+        return self.length
+
+
 def _get_global_gloo_group():
     """
     Return a process group based on gloo backend, containing all the ranks
