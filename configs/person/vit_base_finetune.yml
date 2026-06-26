@@ -1,0 +1,64 @@
+MODEL:
+  PRETRAIN_CHOICE: 'finetune'
+  PRETRAIN_PATH: '/path/to/dataset1_pretrained.pth'
+  METRIC_LOSS_TYPE: 'triplet'
+  IF_LABELSMOOTH: 'on'
+  IF_WITH_CENTER: 'no'
+  NAME: 'ViT-B-16'
+  STRIDE_SIZE: [16, 16]
+  ID_LOSS_WEIGHT : 1.0
+  TRIPLET_LOSS_WEIGHT : 1.0
+
+INPUT:
+  SIZE_TRAIN: [256, 128]
+  SIZE_TEST: [256, 128]
+  PROB: 0.5
+  RE_PROB: 0.5
+  PADDING: 10
+  PIXEL_MEAN: [0.5, 0.5, 0.5]
+  PIXEL_STD: [0.5, 0.5, 0.5]
+
+DATALOADER:
+  SAMPLER: 'softmax_triplet'
+  NUM_INSTANCE: 4
+  NUM_WORKERS: 8
+
+SOLVER:
+  IMS_PER_BATCH: 64
+  OPTIMIZER_NAME: "Adam"
+  BASE_LR: 0.000005
+  WARMUP_METHOD: 'linear'
+  WARMUP_ITERS: 10
+  WARMUP_FACTOR: 0.1
+  WEIGHT_DECAY:  0.0001
+  WEIGHT_DECAY_BIAS: 0.0001
+  LARGE_FC_LR: False
+  MAX_EPOCHS: 60
+  CHECKPOINT_PERIOD: 60
+  LOG_PERIOD: 50
+  EVAL_PERIOD: 60
+  BIAS_LR_FACTOR: 2
+
+  STEPS: [30, 50]
+  GAMMA: 0.1
+
+TEST:
+  EVAL: True
+  IMS_PER_BATCH: 64
+  RE_RANKING: False
+  WEIGHT: ''
+  NECK_FEAT: 'before'
+  FEAT_NORM: 'yes'
+
+DATASETS:
+#   NAMES: ('market1501_plus_dukemtmc')
+#   ROOT_DIR: ('')
+# OUTPUT_DIR: ''
+
+# PRETRAIN_CHOICE 说明:
+#   'imagenet' - 使用 CLIP ImageNet 预训练权重（默认）
+#   'finetune' - 从其他数据集训练的权重微调（自动跳过分类头等 shape 不匹配的层）
+#   'self'     - 从相同数据集的 checkpoint 继续训练（支持部分加载）
+
+# 使用示例:
+# CUDA_VISIBLE_DEVICES=0 python train.py --config_file configs/person/vit_base_finetune.yml MODEL.PRETRAIN_PATH ./market1501_pretrained.pth
