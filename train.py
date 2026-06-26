@@ -66,6 +66,11 @@ if __name__ == '__main__':
 
     model = make_model(cfg, num_class=num_classes, camera_num=camera_num, view_num = view_num)
 
+    if cfg.MODEL.PRETRAIN_CHOICE == 'finetune' and cfg.MODEL.PRETRAIN_PATH:
+        model.load_param_finetune(cfg.MODEL.PRETRAIN_PATH)
+    elif cfg.MODEL.PRETRAIN_CHOICE == 'self' and cfg.MODEL.PRETRAIN_PATH:
+        model.load_param(cfg.MODEL.PRETRAIN_PATH, strict=False)
+
     loss_func, center_criterion = make_loss(cfg, num_classes=num_classes)
 
     optimizer, optimizer_center = make_optimizer(cfg, model, center_criterion)

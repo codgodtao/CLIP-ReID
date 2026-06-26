@@ -115,17 +115,63 @@ class build_transformer(nn.Module):
                 return torch.cat([img_feature, img_feature_proj], dim=1)
 
 
-    def load_param(self, trained_path):
-        param_dict = torch.load(trained_path)
-        for i in param_dict:
-            self.state_dict()[i.replace('module.', '')].copy_(param_dict[i])
+    def load_param(self, trained_path, strict=True):
+        param_dict = torch.load(trained_path, map_location="cpu")
+        if "state_dict" in param_dict:
+            param_dict = param_dict["state_dict"]
+        model_dict = self.state_dict()
+        loaded_keys = []
+        skipped_keys = []
+        shape_mismatch_keys = []
+
+        for k, v in param_dict.items():
+            key = k.replace('module.', '')
+            if key not in model_dict:
+                skipped_keys.append(key)
+                continue
+            if model_dict[key].shape != v.shape:
+                shape_mismatch_keys.append((key, list(model_dict[key].shape), list(v.shape)))
+                continue
+            model_dict[key].copy_(v)
+            loaded_keys.append(key)
+
         print('Loading pretrained model from {}'.format(trained_path))
+        print('  Loaded {} keys'.format(len(loaded_keys)))
+        if skipped_keys:
+            print('  Skipped (not in model): {} keys'.format(len(skipped_keys)))
+            for k in skipped_keys[:10]:
+                print('    - {}'.format(k))
+        if shape_mismatch_keys:
+            print('  Skipped (shape mismatch): {} keys'.format(len(shape_mismatch_keys)))
+            for k, ms, vs in shape_mismatch_keys:
+                print('    - {}: model={} vs ckpt={}'.format(k, ms, vs))
+        if not strict and (skipped_keys or shape_mismatch_keys):
+            print('  (non-strict mode: partial load is OK)')
 
     def load_param_finetune(self, model_path):
-        param_dict = torch.load(model_path)
-        for i in param_dict:
-            self.state_dict()[i].copy_(param_dict[i])
+        param_dict = torch.load(model_path, map_location="cpu")
+        if "state_dict" in param_dict:
+            param_dict = param_dict["state_dict"]
+        model_dict = self.state_dict()
+        loaded_count = 0
+        skipped_shape = []
+
+        for k, v in param_dict.items():
+            key = k.replace('module.', '')
+            if key not in model_dict:
+                continue
+            if model_dict[key].shape != v.shape:
+                skipped_shape.append(key)
+                continue
+            model_dict[key].copy_(v)
+            loaded_count += 1
+
         print('Loading pretrained model for finetuning from {}'.format(model_path))
+        print('  Loaded {} keys'.format(loaded_count))
+        if skipped_shape:
+            print('  Skipped due to shape mismatch (classifier/bnneck etc.): {} keys'.format(len(skipped_shape)))
+            for k in skipped_shape:
+                print('    - {}'.format(k))
 
 
 def make_model(cfg, num_class, camera_num, view_num):
