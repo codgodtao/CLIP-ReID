@@ -115,7 +115,7 @@ class build_transformer(nn.Module):
                 return torch.cat([img_feature, img_feature_proj], dim=1)
 
 
-    def load_param(self, trained_path, strict=True):
+    def load_param(self, trained_path, strict=True, reuse_classifier=False):
         param_dict = torch.load(trained_path, map_location="cpu")
         if "state_dict" in param_dict:
             param_dict = param_dict["state_dict"]
@@ -123,17 +123,33 @@ class build_transformer(nn.Module):
         loaded_keys = []
         skipped_keys = []
         shape_mismatch_keys = []
+        partial_loaded = []
+
+        classifier_keys = ('classifier.', 'classifier_proj.')
 
         for k, v in param_dict.items():
             key = k.replace('module.', '')
             if key not in model_dict:
                 skipped_keys.append(key)
                 continue
-            if model_dict[key].shape != v.shape:
-                shape_mismatch_keys.append((key, list(model_dict[key].shape), list(v.shape)))
+            if model_dict[key].shape == v.shape:
+                model_dict[key].copy_(v)
+                loaded_keys.append(key)
                 continue
-            model_dict[key].copy_(v)
-            loaded_keys.append(key)
+
+            if not strict and reuse_classifier:
+                is_classifier = any(key.startswith(prefix) for prefix in classifier_keys)
+                if is_classifier and len(model_dict[key].shape) == len(v.shape) == 2:
+                    m_shape = model_dict[key].shape
+                    v_shape = v.shape
+                    if m_shape[1] == v_shape[1]:
+                        min_classes = min(m_shape[0], v_shape[0])
+                        model_dict[key][:min_classes].copy_(v[:min_classes])
+                        partial_loaded.append((key, min_classes, m_shape[0], v_shape[0]))
+                        loaded_keys.append(key)
+                        continue
+
+            shape_mismatch_keys.append((key, list(model_dict[key].shape), list(v.shape)))
 
         print('Loading pretrained model from {}'.format(trained_path))
         print('  Loaded {} keys'.format(len(loaded_keys)))
@@ -141,6 +157,10 @@ class build_transformer(nn.Module):
             print('  Skipped (not in model): {} keys'.format(len(skipped_keys)))
             for k in skipped_keys[:10]:
                 print('    - {}'.format(k))
+        if partial_loaded:
+            print('  Partially loaded (classifier reuse): {} keys'.format(len(partial_loaded)))
+            for k, n, m_new, m_old in partial_loaded:
+                print('    - {}: {}/{} classes loaded from ckpt ({} classes)'.format(k, n, m_new, m_old))
         if shape_mismatch_keys:
             print('  Skipped (shape mismatch): {} keys'.format(len(shape_mismatch_keys)))
             for k, ms, vs in shape_mismatch_keys:
@@ -148,30 +168,49 @@ class build_transformer(nn.Module):
         if not strict and (skipped_keys or shape_mismatch_keys):
             print('  (non-strict mode: partial load is OK)')
 
-    def load_param_finetune(self, model_path):
+    def load_param_finetune(self, model_path, reuse_classifier=True):
         param_dict = torch.load(model_path, map_location="cpu")
         if "state_dict" in param_dict:
             param_dict = param_dict["state_dict"]
         model_dict = self.state_dict()
         loaded_count = 0
+        partial_loaded = []
         skipped_shape = []
+
+        classifier_keys = ('classifier.', 'classifier_proj.')
 
         for k, v in param_dict.items():
             key = k.replace('module.', '')
             if key not in model_dict:
                 continue
-            if model_dict[key].shape != v.shape:
-                skipped_shape.append(key)
+            if model_dict[key].shape == v.shape:
+                model_dict[key].copy_(v)
+                loaded_count += 1
                 continue
-            model_dict[key].copy_(v)
-            loaded_count += 1
+
+            is_classifier = any(key.startswith(prefix) for prefix in classifier_keys)
+            if reuse_classifier and is_classifier and len(model_dict[key].shape) == len(v.shape) == 2:
+                m_shape = model_dict[key].shape
+                v_shape = v.shape
+                if m_shape[1] == v_shape[1]:
+                    min_classes = min(m_shape[0], v_shape[0])
+                    model_dict[key][:min_classes].copy_(v[:min_classes])
+                    partial_loaded.append((key, min_classes, m_shape[0], v_shape[0]))
+                    loaded_count += 1
+                    continue
+
+            skipped_shape.append((key, list(model_dict[key].shape), list(v.shape)))
 
         print('Loading pretrained model for finetuning from {}'.format(model_path))
         print('  Loaded {} keys'.format(loaded_count))
+        if partial_loaded:
+            print('  Partially loaded (classifier reuse): {} keys'.format(len(partial_loaded)))
+            for k, n, m_new, m_old in partial_loaded:
+                print('    - {}: {}/{} classes loaded from ckpt ({} classes)'.format(k, n, m_new, m_old))
         if skipped_shape:
-            print('  Skipped due to shape mismatch (classifier/bnneck etc.): {} keys'.format(len(skipped_shape)))
-            for k in skipped_shape:
-                print('    - {}'.format(k))
+            print('  Skipped due to shape mismatch: {} keys'.format(len(skipped_shape)))
+            for k, ms, vs in skipped_shape:
+                print('    - {}: model={} vs ckpt={}'.format(k, ms, vs))
 
 
 def make_model(cfg, num_class, camera_num, view_num):
